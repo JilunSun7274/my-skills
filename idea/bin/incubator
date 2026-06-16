@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# 想法温床管理分发器。子命令：new | add-scheduler | rm-scheduler | crontab | set-status | compost
+set -euo pipefail
+source "$(cd "$(dirname "$0")" && pwd)/incubator-lib.sh"
+
+cmd="${1:-}"; shift || true
+
+case "$cmd" in
+  new)
+    # new <id> [category] [--idea "text"]
+    id="${1:-}"; category="${2:-chores}"; idea=""
+    shift || true; shift || true
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --idea) idea="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    inc_new "$id" "$category" "$idea"
+    ;;
+  add-scheduler)
+    # add-scheduler <id> --name N --cron C --executor E --command CMD
+    id="${1:-}"; shift || true
+    name=""; cron=""; executor="claude"; command=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --name) name="${2:-}"; shift 2 ;;
+        --cron) cron="${2:-}"; shift 2 ;;
+        --executor) executor="${2:-}"; shift 2 ;;
+        --command) command="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    inc_add_scheduler "$id" "$name" "$cron" "$executor" "$command"
+    ;;
+  rm-scheduler)
+    # rm-scheduler <id> <name>
+    inc_rm_scheduler "${1:-}" "${2:-}"
+    ;;
+  crontab)
+    # crontab sync <id> | crontab remove <id>
+    sub="${1:-}"; id="${2:-}"
+    case "$sub" in
+      sync)   inc_crontab_sync "$id" ;;
+      remove) inc_crontab_remove "$id" ;;
+      *) echo "incubator crontab: 需要 sync|remove" >&2; exit 2 ;;
+    esac
+    ;;
+  set-status)
+    inc_set_status "${1:-}" "${2:-}"
+    ;;
+  compost)
+    inc_compost "${1:-}"
+    ;;
+  *)
+    echo "incubator: unknown command: $cmd" >&2
+    exit 2
+    ;;
+esac
