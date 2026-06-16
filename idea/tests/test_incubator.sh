@@ -170,6 +170,71 @@ test_run_records_failure() {
   assert_contains "$(cat "$d/STATUS.md")" "failed" "STATUS.md 标记 failed"
 }
 
+test_next_md_scaffolded() {
+  "$BIN_DIR/incubator" new t x --idea "i"
+  local d="$INCUBATOR_HOME/t"
+  assert_file "$d/deliverable/NEXT.md" "NEXT.md 建在 deliverable 下"
+  # NEXT.md 随 init 提交一起进 deliverable git
+  assert_contains "$(git -C "$d/deliverable" ls-files)" "NEXT.md" "NEXT.md 已被 git 跟踪"
+  # PLAN.md 目标段标明不可变契约
+  assert_contains "$(cat "$d/PLAN.md")" "不可变契约" "PLAN 目标段含不可变标记"
+}
+
+test_run_blocked_when_mailbox_present() {
+  "$BIN_DIR/incubator" new t x --idea "i"
+  "$BIN_DIR/incubator" add-scheduler t --name s --cron "* * * * *" --executor sh \
+    --command 'echo SHOULD_NOT_RUN > sentinel.txt'
+  local d="$INCUBATOR_HOME/t"
+  # 投信箱 → 软暂停
+  echo "请审批：想改方向" > "$d/MAILBOX.md"
+  "$BIN_DIR/incubator-run" t s || _fail "blocked 应返回 0（非失败）"
+  # command 未执行：sentinel 不存在
+  if [ -f "$d/deliverable/sentinel.txt" ]; then _fail "blocked 时 command 不应执行"; fi
+  # 状态记为 blocked
+  assert_eq "blocked" "$(jq -r '.schedulers[0].last_status' "$d/schedulers.json")" "last_status=blocked"
+  # 该 run 目录留有 blocked 标记
+  assert_eq "1" "$(ls "$d/runs"/*/blocked 2>/dev/null | wc -l | tr -d ' ')" "run 留 blocked 标记"
+  # STATUS.md 记 blocked
+  assert_contains "$(cat "$d/STATUS.md")" "blocked" "STATUS.md 标记 blocked"
+}
+
+test_run_proceeds_when_mailbox_absent() {
+  "$BIN_DIR/incubator" new t x --idea "i"
+  "$BIN_DIR/incubator" add-scheduler t --name s --cron "* * * * *" --executor sh \
+    --command 'echo ran > out.txt'
+  "$BIN_DIR/incubator-run" t s
+  local d="$INCUBATOR_HOME/t"
+  assert_file "$d/deliverable/out.txt" "无信箱时 command 正常执行"
+  assert_eq "ok" "$(jq -r '.schedulers[0].last_status' "$d/schedulers.json")" "last_status=ok"
+}
+
+test_clear_mailbox_removes_file_and_resumes() {
+  "$BIN_DIR/incubator" new t x --idea "i"
+  "$BIN_DIR/incubator" add-scheduler t --name s --cron "* * * * *" --executor sh \
+    --command 'echo ran > out.txt'
+  local d="$INCUBATOR_HOME/t"
+  echo "待审" > "$d/MAILBOX.md"
+  "$BIN_DIR/incubator-run" t s                       # blocked，不产出
+  if [ -f "$d/deliverable/out.txt" ]; then _fail "blocked 时不应产出"; fi
+  "$BIN_DIR/incubator" clear-mailbox t
+  if [ -e "$d/MAILBOX.md" ]; then _fail "clear-mailbox 后信箱应消失"; fi
+  "$BIN_DIR/incubator-run" t s                       # 恢复执行
+  assert_file "$d/deliverable/out.txt" "清信箱后 run 恢复执行"
+}
+
+test_next_md_versioned_in_deliverable() {
+  "$BIN_DIR/incubator" new t x --idea "i"
+  "$BIN_DIR/incubator" add-scheduler t --name s --cron "* * * * *" --executor sh \
+    --command 'echo "下一步：继续推进" > NEXT.md'
+  local d="$INCUBATOR_HOME/t"
+  local before; before="$(git -C "$d/deliverable" rev-list --count HEAD)"
+  "$BIN_DIR/incubator-run" t s
+  local after; after="$(git -C "$d/deliverable" rev-list --count HEAD)"
+  assert_eq "$((before + 1))" "$after" "改 NEXT.md 产生一次 deliverable 提交"
+  assert_contains "$(git -C "$d/deliverable" log -1 --name-only)" "NEXT.md" "提交含 NEXT.md 变更"
+  assert_contains "$(cat "$d/deliverable/NEXT.md")" "继续推进" "NEXT.md 内容已更新"
+}
+
 test_set_status_updates_idea_md() {
   "$BIN_DIR/incubator" new t x --idea "i"
   "$BIN_DIR/incubator" set-status t paused
@@ -206,6 +271,11 @@ run_test test_crontab_sync_preserves_foreign_lines
 run_test test_run_executes_and_logs
 run_test test_run_unknown_scheduler_fails
 run_test test_run_records_failure
+run_test test_next_md_scaffolded
+run_test test_run_blocked_when_mailbox_present
+run_test test_run_proceeds_when_mailbox_absent
+run_test test_clear_mailbox_removes_file_and_resumes
+run_test test_next_md_versioned_in_deliverable
 run_test test_set_status_updates_idea_md
 run_test test_compost_moves_dir_and_strips_crontab
 finish

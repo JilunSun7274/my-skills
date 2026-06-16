@@ -33,12 +33,14 @@
 ```
 ~/incubator/<idea-id>/
   idea.md           # 想法原文、分类、状态、创建时间
-  PLAN.md           # 立项书：目标、计划、阶段、待挂的工作类型；执行器每次 run 先读它
+  PLAN.md           # 立项书：目标（不可变契约）、计划、阶段；执行器只读 ../PLAN.md
+  MAILBOX.md        # 审批信箱（按需存在）：存在 ⟺ 待人类 review ⟺ cron 软暂停
   schedulers.json   # 该想法所有 scheduler 配置（见 §5）
   STATUS.md         # 最新进展摘要；/idea 查看时读这个
-  runs/<timestamp>/ # 每次 run 的过程账本：stdout/stderr、退出码（短暂、可清理）
+  runs/<timestamp>/ # 每次 run 的过程账本：stdout/stderr、退出码、blocked 标记（短暂、可清理）
   deliverable/      # 成果仓库（git）：执行器的工作目录，版本化累积交付物
     .git/
+    NEXT.md         # 可变的「下一步意图」，执行器每次 run 续写，随 git 演化
 ```
 
 墓园（compost 目标）：
@@ -63,7 +65,29 @@
 2. **立规划**（与用户对话）：Agent 与用户聊清楚——这条想法要做成什么、分哪几步、近期计划、需要追踪/调研/开发中的哪几类工作。产出 `PLAN.md` 作为立项书。
 3. **导出调度意向**：规划谈完，自然得出该挂哪些 scheduler 及各自执行器该被指示做什么。`schedulers.json` 不是凭空填写，而是从 `PLAN.md` 流出。是否当场 `schedule` 由用户决定。
 
-`PLAN.md` 是温床的「创始文档」：cron run 中的执行器每次先读它以确定当前推进方向（背景与计划）；某次 run 的具体任务则由该 scheduler 在 `schedulers.json` 中的 `command` 指令给出。想法演化时可经 `/idea` 对话更新 `PLAN.md`。
+`PLAN.md` 是温床的「创始文档」：其「目标」段是**不可变契约（北极星）**——仅人类经 `/idea` 对话可改，执行器只读。cron run 中的执行器每次先读它确定推进方向；某次 run 的**下一步**由 `deliverable/NEXT.md`（执行器自己续写、可演化）给出，而非写死在 `schedulers.json` 的 command 里。command 退化为固定引导语（见 §5.5）。
+
+## 5.5 · 自我演化与 human-in-the-loop（三文件机制）
+
+痛点：原设计里每个 scheduler 的 `command` 是写死的一次性任务串，执行器无法改变下一次行为，必须等人类手动 `/idea schedule` 改配置。
+
+解法：把「下一步做什么」从静态 command 变成执行器可续写的状态，用两道闸门保证不跑偏：
+
+| 文件 | 角色 | 谁可写 |
+|------|------|--------|
+| `PLAN.md` 的「目标」段 | 不可变契约（北极星） | 仅人类（/idea 对话） |
+| `deliverable/NEXT.md` | 可变的下一步意图（随 git 演化） | 执行器每次 run 续写 |
+| `MAILBOX.md` | 审批信箱：存在 ⟺ 待审 ⟺ cron 软暂停 | 执行器投递 / 人类清空 |
+
+**闭环**：cron 触发 `incubator-run` → **执行前查 MAILBOX**，存在则记一条 `blocked`（写 `runs/<ts>/blocked`、STATUS.md 追加、`last_status=blocked`）并 **return 0** 跳过执行（软暂停，crontab 完全不动）→ 否则执行 command（固定引导语：读 PLAN+NEXT+git log → 干活 → 续写 NEXT.md → 自评是否偏离目标 / 触敏感操作，越界则写 MAILBOX.md 停手）→ wrapper 记账、提交 deliverable（含 NEXT.md 变更）。
+
+**判定「是否偏离」由执行器自评**（提示词驱动，软约束）。人类经 `/idea review` 审：approve 则 `clear-mailbox`（下次自动恢复），或编辑 NEXT/PLAN 纠偏。
+
+**不变量**：
+- 软暂停：MAILBOX 存在 ⟹ run 自跳过，无 crontab 副作用，幂等可恢复。
+- 目标锚定：PLAN 目标段执行器只读，改目标必须人类介入——防漂移硬锚。
+- 意图可审计：NEXT.md 在 deliverable git 里，`git log NEXT.md` 即完整意图演化史。
+- blocked ≠ failed：blocked 返回 0，不污染失败语义、不触发失败标红。
 
 ## 5 · 调度器、执行器与 wrapper
 
@@ -115,8 +139,9 @@ crontab 中只写稳定行，真正的命令不入 crontab：
 | 命令 | 作用 |
 |------|------|
 | `/idea incubate <想法/指代>` | 搭骨架 + 立规划对话（§4） |
-| `/idea schedule <id>` | 为已孵化想法配置 / 修改 scheduler（对话定 cron + 执行器命令），写 `schedulers.json` 并同步 crontab |
-| `/idea status [id]` | 看某想法的 `STATUS.md` + 最近 run + git log；不带 id 给全局概览 |
+| `/idea schedule <id>` | 为已孵化想法配置 / 修改 scheduler（cron + 执行器 + 固定引导语 command），写 `schedulers.json` 并同步 crontab |
+| `/idea review [id]` | 审阅执行器投递的审批请求（MAILBOX）：不带 id 列出所有待审；带 id 看请求 + NEXT diff + PLAN 目标对照，approve（clear-mailbox 恢复）或纠偏 |
+| `/idea status [id]` | 看某想法的 `STATUS.md` + 最近 run + git log；不带 id 给全局概览。`blocked` 提示 review |
 | `/idea pause <id>` / `/idea resume <id>` | 临时摘除 / 恢复该想法的 crontab 行（保留配置与目录，状态置 `paused` / `active`） |
 | `/idea graduate <id>` | 想法毕业：停所有 scheduler，归档，标记 `graduated` |
 | `/idea compost <id>` | 温和弃置：停所有 scheduler，清 crontab 行，整目录移入 `.compost/`（可恢复）；操作前复述确认 |
@@ -128,6 +153,7 @@ crontab 中只写稳定行，真正的命令不入 crontab：
 - **静默回报**：run 只写 `STATUS.md` / `runs/`，不主动打扰；`/idea` 或 `/idea status` 时才汇总新进展。
 - **git 审计线**：deliverable 每次有改动即 commit，`git log` 完整记录演化；`/idea status` 可展示最近几条 commit。
 - **失败处理**：run 失败（执行器非零退出）时 wrapper 记 `last_status: failed`，错误留在 `runs/`；下次 `/idea status` 标红提示。不自动重试、不自动报警（符合静默基调）。
+- **软暂停（blocked）**：MAILBOX 非空时 run 跳过执行、记 `last_status: blocked` 并 return 0（非失败）。这是 human-in-the-loop 的待审信号，`/idea status` / `/idea` 查看时以 ⏸ 置顶提示，人类 `/idea review` 后清空信箱即自动恢复。
 
 ## 8 · 远端接缝（预留，本期不实现）
 

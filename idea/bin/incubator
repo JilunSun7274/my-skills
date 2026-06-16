@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 想法温床管理分发器。子命令：new | add-scheduler | rm-scheduler | crontab | set-status | compost
+# 想法温床管理分发器。子命令：new | add-scheduler | rm-scheduler | crontab | set-status | clear-mailbox | compost
 set -euo pipefail
 source "$(cd "$(dirname "$0")" && pwd)/incubator-lib.sh"
 
@@ -48,6 +48,10 @@ case "$cmd" in
     ;;
   set-status)
     inc_set_status "${1:-}" "${2:-}"
+    ;;
+  clear-mailbox)
+    # clear-mailbox <id>：删审批信箱，下次 run 自动恢复
+    inc_clear_mailbox "${1:-}"
     ;;
   compost)
     inc_compost "${1:-}"

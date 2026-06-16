@@ -51,6 +51,7 @@ EOF
 
 ## 目标
 
+<!-- 不可变契约（北极星）：仅人类经 /idea 对话可改；执行器只读，不得改写本段。 -->
 （待立项对话填写）
 
 ## 计划与阶段
@@ -60,6 +61,13 @@ EOF
 ## 工作类型
 
 （追踪 / 调研 / 开发，待填写）
+EOF
+  # NEXT.md：可变的「下一步意图」，执行器每次 run 末尾续写。
+  # 放在 deliverable/ 里 → 执行器工作目录即此处，直接读写，天然随 deliverable git 版本化。
+  cat > "$d/deliverable/NEXT.md" <<EOF
+# 下一步意图
+
+（尚无下一步意图；首次 run 由执行器依据 ../PLAN.md 续写。）
 EOF
   # schedulers.json
   echo '{"schedulers":[],"remote":""}' | jq '.' > "$d/schedulers.json"
@@ -80,6 +88,17 @@ EOF
 }
 
 inc_schedulers_file() { echo "$(inc_dir "$1")/schedulers.json"; }
+
+# MAILBOX：审批信箱。文件存在 ⟺ 待人类审批 ⟺ cron 软暂停。
+# 执行器越界时投递（直接写文件）；人类 /idea review 后清空（删文件）即恢复。
+inc_mailbox_path() { echo "$(inc_dir "$1")/MAILBOX.md"; }
+inc_is_blocked()   { [ -e "$(inc_mailbox_path "$1")" ]; }
+inc_clear_mailbox() {
+  # inc_clear_mailbox <id>：删信箱，下次 run 自动恢复
+  local id="$1"
+  inc_require "$id" || return 1
+  rm -f "$(inc_mailbox_path "$id")"
+}
 
 inc_add_scheduler() {
   # inc_add_scheduler <id> <name> <cron> <executor> <command>
@@ -166,6 +185,17 @@ _incubator_run() {
   fi
   local ts rundir; ts="$(date +%Y-%m-%dT%H%M%S)"; rundir="$d/runs/$ts"
   mkdir -p "$rundir"
+  # 执行前闸门：MAILBOX 存在 ⟹ 软暂停。跳过执行、记 blocked、返回 0（blocked 非失败，
+  # 不污染失败语义、不触发 cron 噪声）。人类 /idea review 清空信箱后下次自动恢复。
+  if inc_is_blocked "$id"; then
+    : > "$rundir/blocked"
+    local tmp_b; tmp_b="$(mktemp)"
+    jq --arg n "$name" --arg t "$ts" \
+      '(.schedulers[]|select(.name==$n)) |= (.last_run=$t | .last_status="blocked")' \
+      "$f" > "$tmp_b" && mv "$tmp_b" "$f"
+    printf -- '- [%s] %s: blocked（等待 /idea review %s）\n' "$ts" "$name" "$id" >> "$d/STATUS.md"
+    return 0
+  fi
   # 在 deliverable 工作目录执行
   local rc
   ( cd "$d/deliverable" && eval "$command" ) > "$rundir/output.log" 2>&1
