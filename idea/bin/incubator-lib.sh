@@ -196,9 +196,13 @@ _incubator_run() {
     printf -- '- [%s] %s: blocked（等待 /idea review %s）\n' "$ts" "$name" "$id" >> "$d/STATUS.md"
     return 0
   fi
-  # 在 deliverable 工作目录执行
+  # 在 deliverable 工作目录执行。
+  # cron 触发时 PATH 极简（仅 /usr/bin:/bin），不含执行器安装目录，
+  # 会导致 `claude`/nanobot/codex 等命令 127 not found（见 agent-self-evolution 2026-06-17）。
+  # 故在执行子 shell 内把常见用户级 bin 目录前置进 PATH；可被 INCUBATOR_RUN_PATH 覆盖。
+  local run_path="${INCUBATOR_RUN_PATH:-$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin}"
   local rc
-  ( cd "$d/deliverable" && eval "$command" ) > "$rundir/output.log" 2>&1
+  ( cd "$d/deliverable" && PATH="$run_path:$PATH" eval "$command" ) > "$rundir/output.log" 2>&1
   rc=$?
   echo "$rc" > "$rundir/exit_code"
   local status="ok"; [ "$rc" -eq 0 ] || status="failed"
