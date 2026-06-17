@@ -79,15 +79,30 @@
 | `deliverable/NEXT.md` | 可变的下一步意图（随 git 演化） | 执行器每次 run 续写 |
 | `MAILBOX.md` | 审批信箱：存在 ⟺ 待审 ⟺ cron 软暂停 | 执行器投递 / 人类清空 |
 
-**闭环**：cron 触发 `incubator-run` → **执行前查 MAILBOX**，存在则记一条 `blocked`（写 `runs/<ts>/blocked`、STATUS.md 追加、`last_status=blocked`）并 **return 0** 跳过执行（软暂停，crontab 完全不动）→ 否则执行 command（固定引导语：读 PLAN+NEXT+git log → 干活 → 续写 NEXT.md → 自评是否偏离目标 / 触敏感操作，越界则写 MAILBOX.md 停手）→ wrapper 记账、提交 deliverable（含 NEXT.md 变更）。
+**闭环**：cron 触发 `incubator-run` → **执行前查 MAILBOX**，存在则记一条 `blocked`（写 `runs/<ts>/blocked`、STATUS.md 追加、`last_status=blocked`）并 **return 0** 跳过执行（软暂停，crontab 完全不动）→ 否则执行 command（固定引导语：读 PLAN+NEXT+NOTES+git log → 处理人类建议 → 干活 → 续写 NEXT.md → 自评是否偏离目标 / 触敏感操作，越界则写 MAILBOX.md 停手）→ wrapper 记账、提交 deliverable（含 NEXT.md 变更）。
 
 **判定「是否偏离」由执行器自评**（提示词驱动，软约束）。人类经 `/idea review` 审：approve 则 `clear-mailbox`（下次自动恢复），或编辑 NEXT/PLAN 纠偏。
+
+### 双向反馈：人 ⟷ 执行器
+
+MAILBOX 是执行器→人的单向通道（且仅越界时触发）。对称地补一条人→执行器的反馈通道，让人**随时主动**给在跑项目留建议：
+
+| 文件 | 方向 | 阻塞? | 角色 |
+|------|------|:---:|------|
+| `MAILBOX.md` | 执行器 → 人 | 是（非空即停） | 越界喊停、等审批 |
+| `NOTES.md` | 人 → 执行器 | 否（照常跑） | 人类建议信箱，执行器每次 run 必读、作本轮最高优先强指令 |
+| `deliverable/FEEDBACK.md` | 执行器 → 人 | — | 逐条回应建议如何处理（随 git，审计线） |
+
+- **优先级**：PLAN 目标（不可变）＞ NOTES（人类即时强指令）＞ NEXT（执行器自主）。
+- **生命周期**：人 `/idea note` 写入 → 下次 run 必读必处理 → FEEDBACK 回应 → 执行器清空 NOTES（回收，不重复读）。
+- **结构优点**：NOTES 不阻塞，故纯靠 CLI 入口（`incubator note`/`clear-notes`）+ command 引导语实现，**wrapper 与 inc_new 零改动**。
 
 **不变量**：
 - 软暂停：MAILBOX 存在 ⟹ run 自跳过，无 crontab 副作用，幂等可恢复。
 - 目标锚定：PLAN 目标段执行器只读，改目标必须人类介入——防漂移硬锚。
-- 意图可审计：NEXT.md 在 deliverable git 里，`git log NEXT.md` 即完整意图演化史。
+- 意图可审计：NEXT.md 在 deliverable git 里，`git log NEXT.md` 即完整意图演化史；FEEDBACK.md 同理记录人机反馈往来。
 - blocked ≠ failed：blocked 返回 0，不污染失败语义、不触发失败标红。
+- 职责分明：MAILBOX 非空=停（执行器喊停）；NOTES 非空=照跑但必读必执行（人主动给料）。互不重叠。
 
 ## 5 · 调度器、执行器与 wrapper
 

@@ -235,6 +235,44 @@ test_next_md_versioned_in_deliverable() {
   assert_contains "$(cat "$d/deliverable/NEXT.md")" "继续推进" "NEXT.md 内容已更新"
 }
 
+test_add_note_creates_and_appends() {
+  "$BIN_DIR/incubator" new t x --idea "i"
+  "$BIN_DIR/incubator" note t "建议A：把第二节写详细些"
+  local f="$INCUBATOR_HOME/t/NOTES.md"
+  assert_file "$f" "note 后 NOTES.md 已建"
+  assert_contains "$(cat "$f")" "建议A" "含第一条建议"
+  "$BIN_DIR/incubator" note t "建议B：核实数据来源"
+  assert_contains "$(cat "$f")" "建议A" "追加后第一条仍在"
+  assert_contains "$(cat "$f")" "建议B" "含第二条建议"
+}
+
+test_note_rejects_empty() {
+  "$BIN_DIR/incubator" new t x --idea "i"
+  if "$BIN_DIR/incubator" note t "" 2>/dev/null; then
+    _fail "空建议应被拒"
+  fi
+}
+
+test_clear_notes_removes_file() {
+  "$BIN_DIR/incubator" new t x --idea "i"
+  "$BIN_DIR/incubator" note t "建议"
+  assert_file "$INCUBATOR_HOME/t/NOTES.md" "NOTES.md 存在"
+  "$BIN_DIR/incubator" clear-notes t
+  if [ -e "$INCUBATOR_HOME/t/NOTES.md" ]; then _fail "clear-notes 后应消失"; fi
+}
+
+test_notes_does_not_block_run() {
+  # 关键：NOTES 非空不应像 MAILBOX 那样阻塞 run
+  "$BIN_DIR/incubator" new t x --idea "i"
+  "$BIN_DIR/incubator" add-scheduler t --name s --cron "* * * * *" --executor sh \
+    --command 'echo ran > out.txt'
+  "$BIN_DIR/incubator" note t "留个建议但别停"
+  "$BIN_DIR/incubator-run" t s
+  local d="$INCUBATOR_HOME/t"
+  assert_file "$d/deliverable/out.txt" "NOTES 非空时 command 仍正常执行"
+  assert_eq "ok" "$(jq -r '.schedulers[0].last_status' "$d/schedulers.json")" "last_status=ok（非 blocked）"
+}
+
 test_set_status_updates_idea_md() {
   "$BIN_DIR/incubator" new t x --idea "i"
   "$BIN_DIR/incubator" set-status t paused
@@ -276,6 +314,10 @@ run_test test_run_blocked_when_mailbox_present
 run_test test_run_proceeds_when_mailbox_absent
 run_test test_clear_mailbox_removes_file_and_resumes
 run_test test_next_md_versioned_in_deliverable
+run_test test_add_note_creates_and_appends
+run_test test_note_rejects_empty
+run_test test_clear_notes_removes_file
+run_test test_notes_does_not_block_run
 run_test test_set_status_updates_idea_md
 run_test test_compost_moves_dir_and_strips_crontab
 finish

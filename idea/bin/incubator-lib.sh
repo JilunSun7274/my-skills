@@ -100,6 +100,35 @@ inc_clear_mailbox() {
   rm -f "$(inc_mailbox_path "$id")"
 }
 
+# NOTES：人类建议信箱（人→agent，对称于 MAILBOX）。人随时写，执行器每次 run 必读、
+# 作为本轮最高优先强指令处理，在 deliverable/FEEDBACK.md 回应后清空本文件。
+# 不阻塞调度（区别于 MAILBOX）：非空也照常 run。
+inc_notes_path() { echo "$(inc_dir "$1")/NOTES.md"; }
+inc_add_note() {
+  # inc_add_note <id> <text>：追加一条带时间戳的人类建议（不存在则建头）
+  local id="$1" text="$2"
+  inc_require "$id" || return 1
+  if [ -z "$text" ]; then echo "incubator: note 需要建议内容" >&2; return 1; fi
+  local f; f="$(inc_notes_path "$id")"
+  if [ ! -f "$f" ]; then
+    cat > "$f" <<'EOF'
+# 人类建议（NOTES）
+
+> 执行器每次 run 必读本文件，作为本轮最高优先的强指令处理；
+> 每条须在 deliverable/FEEDBACK.md 回应（已采纳→怎么做 / 未采纳→为何），处理后清空本文件。
+> 不阻塞调度：本文件非空时 run 照常进行。
+
+EOF
+  fi
+  printf -- '- [%s] %s\n' "$(date +%Y-%m-%dT%H%M%S)" "$text" >> "$f"
+}
+inc_clear_notes() {
+  # inc_clear_notes <id>：删建议信箱（人类手动撤回；执行器在 run 内自行清空）
+  local id="$1"
+  inc_require "$id" || return 1
+  rm -f "$(inc_notes_path "$id")"
+}
+
 inc_add_scheduler() {
   # inc_add_scheduler <id> <name> <cron> <executor> <command>
   local id="$1" name="$2" cron="$3" executor="$4" command="$5"
